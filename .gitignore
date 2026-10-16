@@ -1,0 +1,17 @@
+# Every top-level folder is its own git repository: the ETFs hub, Stocks and
+# every ETF brand repo (AAM, ARK, ..., iShares).
+# Ignore ALL top-level folders so this repo never tracks or embeds them.
+# Their own .git folders keep working exactly as before (commit, push, pull, branches).
+/*/
+
+# ...except what belongs to this repo itself (add new folders here, e.g. !/src/)
+!/.github/
+!/.claude/
+
+# local noise
+.idea/
+.DS_Store
+node_modules/
+.claude/settings.local.json
+.parcel-cache/
+dist/
