@@ -1,0 +1,43 @@
+name: GitHub Pages
+# No data workflow: the shell is deployed on every push to main and by manual dispatch.
+# On github.io the tabs show the apps' own Pages sites (daggerok.github.io/ETFs/, /Stocks/), so only the shell is built here
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout latest default branch
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 2
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install -E
+      - run: bun test
+      - run: time bun run build-github-pages
+      - name: Setup Pages
+        uses: actions/configure-pages@v6
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: './dist'
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

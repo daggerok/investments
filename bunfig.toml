@@ -1,0 +1,3 @@
+[test]
+# ETFs, Stocks and the 29 brand folders inside are separate repos with their own tests: never scan them from here
+root = "scripts"
