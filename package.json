@@ -35,7 +35,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "4.3.3",
     "@types/bun": "1.4.3",
-    "@types/node": "26.6.4",
+    "@types/node": "26.6.5",
     "parcel": "2.16.4",
     "pm2": "7.0.4",
     "rimraf": "6.1.3",
