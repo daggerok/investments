@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="All investment tools in one app: the ETFs hub (every ETF of 29 brands with a cross-brand Watchlist) and the Stocks catalog (Nasdaq, NYSE and Cboe fundamentals, dividends and returns), each in its own tab. Independent unofficial tool; data comes from the public static feeds of the daggerok repositories." />
+  <title>Investments</title>
+  <link rel="icon" type="image/x-icon" href="./favicon.ico">
+
+  <!-- Inter font  -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="./index.css" type="text/css" rel="stylesheet" />
+
+  <!-- Synchronous theme init (prevents flash, same strategy as ETFs / Stocks) -->
+  <script>
+    (function () {
+      var dark = false;
+      try {
+        var saved = localStorage.getItem('investments-theme') || localStorage.getItem('etf-hub-theme') || localStorage.getItem('stocks-theme');
+        dark = saved === 'dark';
+      } catch (e) {}
+      document.documentElement.classList.toggle('dark', dark);
+      document.documentElement.style.backgroundColor = dark ? '#020617' : '#f8fafc';
+    })();
+  </script>
+
+</head>
+<body class="h-dvh flex flex-col overflow-hidden font-sans bg-slate-50 text-slate-900 dark:bg-slate-900 dark:text-slate-100 transition-colors duration-300">
+
+  <!-- App switcher: one tab per app, the app itself runs in the frame below -->
+  <nav id="app-nav" class="shrink-0 flex items-center gap-3 px-4 sm:px-8 py-2 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700" aria-label="Investment apps">
+    <svg class="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M22 7l-8.5 8.5-5-5L2 17" />
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7h6v6" />
+    </svg>
+    <span class="font-semibold tracking-tight max-sm:hidden">Investments</span>
+    <div id="app-tabs" role="tablist" aria-label="Apps" class="flex items-center gap-1.5">
+      <button type="button" role="tab" id="tab-etfs" data-app="etfs" aria-controls="frame-etfs" aria-selected="false" class="app-tab px-3 py-1 rounded-lg border border-slate-200 dark:border-slate-600 text-sm font-medium text-slate-700 dark:text-slate-200 hover:border-blue-400 transition-colors">ETFs</button>
+      <button type="button" role="tab" id="tab-stocks" data-app="stocks" aria-controls="frame-stocks" aria-selected="false" class="app-tab px-3 py-1 rounded-lg border border-slate-200 dark:border-slate-600 text-sm font-medium text-slate-700 dark:text-slate-200 hover:border-blue-400 transition-colors">Stocks</button>
+    </div>
+    <span id="api-mode" class="text-xs text-slate-500 dark:text-slate-400" hidden></span>
+    <a id="open-app" href="#" target="_blank" rel="noopener" class="ml-auto inline-flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400" title="Open the shown app in a new tab">
+      <span class="max-sm:hidden">Open in a new tab</span>
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5" />
+      </svg>
+    </a>
+  </nav>
+
+  <!-- Every app keeps its own frame once opened, so switching tabs keeps its state -->
+  <main id="app-frames" class="relative flex-1 min-h-0">
+    <iframe id="frame-etfs" role="tabpanel" aria-labelledby="tab-etfs" title="ETFs" class="absolute inset-0 w-full h-full border-0" hidden></iframe>
+    <iframe id="frame-stocks" role="tabpanel" aria-labelledby="tab-stocks" title="Stocks" class="absolute inset-0 w-full h-full border-0" hidden></iframe>
+  </main>
+
+  <script src="./main.ts" type="module"></script>
+</body>
+</html>

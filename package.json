@@ -1,0 +1,49 @@
+{
+  "name": "investments",
+  "version": "1.0.0",
+  "description": "Investments",
+  "source": "src/index.html",
+  "scripts": {
+    "clean": "rimraf -rf dist",
+    "build-github-pages": "npm run build -- --public-url=/investments/",
+    "prebuild": "npm run clean",
+    "build": "parcel build --no-cache --no-source-maps --dist-dir ./dist",
+    "build-apps": "./scripts/build-apps.sh",
+    "build-all": "npm run build && npm run build-apps",
+    "preserve": "npm run build-all",
+    "serve": "bun scripts/serve.ts",
+    "dev": "bun scripts/serve.ts --watch",
+    "start": "pm2 start 'npm run serve' --name app",
+    "restart": "pm2 restart app",
+    "ps": "pm2 ps",
+    "logs": "pm2 logs",
+    "stop": "pm2 kill",
+    "test": "bun test"
+  },
+  "keywords": [
+    "tailwind",
+    "parcel",
+    "rimraf",
+    "html",
+    "pm2",
+    "css",
+    "bun"
+  ],
+  "author": "Maksim Kostromin / GitHub: daggerok",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/bun": "1.4.2",
+    "@types/node": "26.6.4",
+    "parcel": "2.16.4",
+    "pm2": "7.0.4",
+    "rimraf": "6.1.3",
+    "tailwindcss": "4.3.3"
+  },
+  "postcss": {
+    "plugins": {
+      "@tailwindcss/postcss": {}
+    }
+  }
+}

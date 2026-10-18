@@ -4,9 +4,11 @@
 # Their own .git folders keep working exactly as before (commit, push, pull, branches).
 /*/
 
-# ...except what belongs to this repo itself (add new folders here, e.g. !/src/)
+# ...except what belongs to this repo itself (add new folders here, e.g. !/assets/)
 !/.github/
 !/.claude/
+!/scripts/
+!/src/
 
 # local noise
 .idea/

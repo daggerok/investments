@@ -1,0 +1,41 @@
+/* index.css */
+/**
+ * ============================================================================
+ * Investments - styles (index.css)
+ * ============================================================================
+ * Tailwind CSS v4 (CSS-first), compiled by Parcel through @tailwindcss/postcss
+ * (see "postcss" in package.json). Same setup as daggerok/ETFs and daggerok/Stocks.
+ *
+ *  - `source(".")`: utilities are generated from src/ only, never from the cloned repos next to it.
+ *  - `@custom-variant dark`: class based dark mode (`html.dark`, toggled by the theme init in index.html).
+ *  - `@theme`: the Inter font family.
+ *  - compat layer: the Tailwind v3 defaults the apps' markup relies on (border color, button cursor).
+ * ============================================================================
+ */
+@import "tailwindcss" source(".");
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: 'Inter', sans-serif;
+}
+
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentColor);
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+/* the tab of the shown app */
+.app-tab[aria-selected="true"] {
+  @apply bg-blue-600 text-white border-blue-600 dark:bg-blue-500 dark:border-blue-500;
+}
