@@ -5,7 +5,9 @@
 #   pull main fast-forward -> bun install --frozen-lockfile -> ./scripts/update-data.ts
 #   -> git add api/<feed> -> commit "chore(data): update <Brand> ETF data" (Stocks: "chore(data): update Stocks data") -> push (rebase and retry when main moved)
 # The feed folder and the commit message are read from the repo's .github/workflows/update-data.yml.
-# A repo that is not on main or has uncommitted changes is skipped and reported, never touched.
+# A repo that is not on main or has uncommitted changes outside its feed folder is skipped and reported, never touched.
+# Uncommitted changes inside the feed folder only are the leftover of an interrupted run (the updater writes, the
+# commit never came): they are discarded before the pull, since the updater regenerates them anyway.
 
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -92,8 +94,14 @@ update_repo() {
   cd "$repo" || return 1
   branch="$(git branch --show-current)"
   [ "$branch" = "main" ] || { echo "on '${branch:-detached HEAD}', not main: skipped (switch to main first)"; return 1; }
-  [ -z "$(git status --porcelain --untracked-files=no)" ] || { echo "uncommitted changes: skipped (commit or stash them first)"; git status --short --untracked-files=no; return 1; }
-  [ -z "$(git status --porcelain -- "$feed")" ] || { echo "untracked files in $feed: skipped"; return 1; }
+  if [ -n "$(git status --porcelain --untracked-files=no -- . ":(exclude)$feed")" ]; then
+    echo "uncommitted changes outside $feed: skipped (commit or stash them first)"; git status --short --untracked-files=no -- . ":(exclude)$feed"; return 1
+  fi
+  if [ -n "$(git status --porcelain -- "$feed")" ]; then
+    # only the data folder is dirty: an earlier run wrote it and was interrupted before the commit
+    echo "leftover data of an interrupted run in $feed: discarded, the updater regenerates it"
+    git checkout -q -- "$feed" && git clean -qfd -- "$feed" || return 1
+  fi
 
   echo "Pulling main (fast-forward only)..."
   git pull --ff-only origin main || return 1
