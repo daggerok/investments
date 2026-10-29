@@ -84,29 +84,32 @@ RESULTS=()
 FAILED=0
 OUT="$(mktemp -d)"; trap 'rm -rf "$OUT"' EXIT
 
+# the reason a repo failed: printed in its section and shown again in the summary line
+fail() { UPDATE_STATE="$1"; echo "$1"; }
+
 update_repo() {
   local repo="$1" workflow feed message branch attempt code
   workflow="$repo/.github/workflows/update-data.yml"
   feed="$(sed -nE 's/^[[:space:]]*git add (api\/[A-Za-z0-9._-]+).*/\1/p' "$workflow" | head -1)"
   message="$(sed -nE 's/^[[:space:]]*git commit -m "([^"]+)".*/\1/p' "$workflow" | head -1)"
-  [ -n "$feed" ] && [ -n "$message" ] || { echo "cannot read the feed folder or the commit message from $workflow"; return 1; }
+  [ -n "$feed" ] && [ -n "$message" ] || { fail "cannot read the feed folder or the commit message from $workflow"; return 1; }
 
-  cd "$repo" || return 1
+  cd "$repo" || { fail "cannot enter $repo"; return 1; }
   branch="$(git branch --show-current)"
-  [ "$branch" = "main" ] || { echo "on '${branch:-detached HEAD}', not main: skipped (switch to main first)"; return 1; }
+  [ "$branch" = "main" ] || { fail "on '${branch:-detached HEAD}', not main: skipped (switch to main first)"; return 1; }
   if [ -n "$(git status --porcelain --untracked-files=no -- . ":(exclude)$feed")" ]; then
-    echo "uncommitted changes outside $feed: skipped (commit or stash them first)"; git status --short --untracked-files=no -- . ":(exclude)$feed"; return 1
+    fail "uncommitted changes outside $feed: skipped (commit or stash them first)"; git status --short --untracked-files=no -- . ":(exclude)$feed"; return 1
   fi
   if [ -n "$(git status --porcelain -- "$feed")" ]; then
     # only the data folder is dirty: an earlier run wrote it and was interrupted before the commit
     echo "leftover data of an interrupted run in $feed: discarded, the updater regenerates it"
-    git checkout -q -- "$feed" && git clean -qfd -- "$feed" || return 1
+    git checkout -q -- "$feed" && git clean -qfd -- "$feed" || { fail "cannot discard the leftover data in $feed"; return 1; }
   fi
 
   echo "Pulling main (fast-forward only)..."
-  git pull --ff-only origin main || return 1
+  git pull --ff-only origin main || { fail "git pull --ff-only failed (local main diverged from origin?)"; return 1; }
   echo "Installing packages..."
-  bun install --frozen-lockfile || return 1
+  bun install --frozen-lockfile || { fail "bun install --frozen-lockfile failed"; return 1; }
 
   echo "Running ./scripts/update-data.ts ..."
   bun ./scripts/update-data.ts
@@ -114,23 +117,24 @@ update_repo() {
   # like the workflow: a run that failed for some funds still keeps every fund complete, so its data is committed
   [ $code -eq 0 ] || echo "update-data.ts exited with $code: committing what it wrote, like the workflow"
 
-  git add "$feed" || return 1
+  git add "$feed" || { fail "git add $feed failed"; return 1; }
   if git diff --cached --quiet -- "$feed"; then
     echo "$feed is already up to date"
-    UPDATE_STATE="unchanged"
+    UPDATE_STATE="unchanged$( [ $code -eq 0 ] || echo ", update-data.ts exited $code")"
     return $code
   fi
-  git commit -q -m "$message" -- "$feed" || return 1
+  git commit -q -m "$message" -- "$feed" || { fail "git commit failed"; return 1; }
   UPDATE_STATE="committed $(git rev-parse --short HEAD)"
+  [ $code -eq 0 ] || UPDATE_STATE="$UPDATE_STATE (update-data.ts exited $code, some funds failed: see the section above)"
   [ "$PUSH" -eq 1 ] || { UPDATE_STATE="$UPDATE_STATE, not pushed (--no-push)"; return $code; }
   # main may have moved while the updater ran (a CI data commit, a merge): rebase the data commit and retry
   for attempt in 1 2 3 4; do
     if git push -q origin main; then UPDATE_STATE="$UPDATE_STATE, pushed"; return $code; fi
     echo "push rejected: rebasing onto origin/main (attempt $attempt)"
-    git pull --rebase -q origin main || { git rebase --abort 2>/dev/null; echo "rebase failed: the data commit stays local"; return 1; }
+    git pull --rebase -q origin main || { git rebase --abort 2>/dev/null; fail "rebase onto origin/main failed: the data commit stays local"; return 1; }
     UPDATE_STATE="committed $(git rev-parse --short HEAD)"
   done
-  echo "push failed 4 times: the data commit stays local"
+  fail "push failed 4 times: the data commit stays local"
   return 1
 }
 
