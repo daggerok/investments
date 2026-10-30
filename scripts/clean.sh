@@ -84,8 +84,8 @@ clean_one() {
   if ! status="$(git -C "$repo" status --porcelain --ignored 2>&1)"; then echo "KEPT    $repo (git status failed: $(printf '%s' "$status" | head -1)): inspect it by hand"; return 1; fi
   if ! unpushed="$(git -C "$repo" log --branches --not --remotes --oneline 2>&1)"; then echo "KEPT    $repo (git log failed): inspect it by hand"; return 1; fi
   if ! stash="$(git -C "$repo" stash list 2>&1)"; then echo "KEPT    $repo (git stash failed): inspect it by hand"; return 1; fi
-  detached=""
-  if [ -z "$(git -C "$repo" branch --show-current 2>/dev/null)" ]; then detached="$(git -C "$repo" log -1 --not --branches --remotes --oneline HEAD 2>/dev/null | head -1)"; fi
+  # a commit reachable only from HEAD (made on a detached HEAD) is lost with the folder; git log --not would negate HEAD itself
+  if ! detached="$(git -C "$repo" rev-list -n1 HEAD --not --branches --remotes 2>&1)"; then echo "KEPT    $repo (git rev-list failed): inspect it by hand"; return 1; fi
   reasons=""
   # untracked/ignored .idea/ and the ignored node_modules/, dist/ and .parcel-cache/ (packages and build output) do not count; any other change or ignored file does
   [ -n "$(printf '%s\n' "$status" | grep -v -e '^$' -e '^?? \.idea/$' -e '^!! \.idea/$' -e '^!! node_modules/$' -e '^!! dist/$' -e '^!! \.parcel-cache/$')" ] && reasons="uncommitted or ignored files"
