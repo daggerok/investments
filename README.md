@@ -3,7 +3,7 @@
 All investment tools in one app, one tab per tool:
 
 - **ETFs** - the [ETFs hub](https://github.com/daggerok/ETFs): every ETF of the 29 brand repositories in one sortable table, cross-brand Watchlist with aggregated holdings, per-fund Overview, Holdings, History and Distributions tabs
-- **Stocks** - the [Stocks](https://github.com/daggerok/Stocks) catalog: Nasdaq, NYSE and Cboe stocks with fundamentals, dividends, valuation multiples, momentum and total returns
+- **Stocks** - the [Stocks](https://github.com/daggerok/Stocks) screener: Nasdaq, NYSE and Cboe stocks together with the ETFs of the 29 brands; SEC fundamentals with quarters and TTM (ADR and IFRS converted to USD), presets with an editor and a funnel, five scores with archetypes, statuses and flags, peers and similar to X, a ticker page with statements and DCF, weekly signals, a guide to every metric in English and Russian
 
 Each tab is the real, unchanged application of its own repository shown in a frame, so it keeps all of its functionality, URL parameters and saved state. Opened tabs stay loaded, so switching between them loses nothing. The theme is shared: toggling it inside one app switches the others. The shown tab is in the URL (`#etfs`, `#stocks`) and remembered in the browser. `Open in a new tab` opens the shown app on its own
 
