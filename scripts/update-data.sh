@@ -8,6 +8,9 @@
 # A repo that is not on main or has uncommitted changes outside its feed folder is skipped and reported, never touched.
 # Uncommitted changes inside the feed folder only are the leftover of an interrupted run (the updater writes, the
 # commit never came): they are discarded before the pull, since the updater regenerates them anyway.
+# A repo whose workflow publishes its feed as a GitHub Pages artifact (Stocks: no git add/commit in update-data.yml, the
+# feed is not in git) is only updated locally: pull, install, restore the published feed when api/<feed> is empty
+# (./scripts/update-data.ts --restore-from), run the updater; nothing is committed or published (run its workflow for that).
 
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -87,11 +90,41 @@ OUT="$(mktemp -d)"; trap 'rm -rf "$OUT"' EXIT
 # the reason a repo failed: printed in its section and shown again in the summary line
 fail() { UPDATE_STATE="$1"; echo "$1"; }
 
+# the workflow publishes the feed as a Pages artifact and the feed is not in git (Stocks): update it locally, commit nothing
+update_local_only() {
+  local repo="$1" workflow="$2" feed branch code
+  feed="$(sed -nE 's/^[[:space:]]*path: (api\/[A-Za-z0-9._-]+)[[:space:]]*$/\1/p' "$workflow" | head -1)"
+  [ -n "$feed" ] || { fail "cannot read the feed folder from $workflow"; return 1; }
+  cd "$repo" || { fail "cannot enter $repo"; return 1; }
+  branch="$(git branch --show-current)"
+  [ "$branch" = "main" ] || { fail "on '${branch:-detached HEAD}', not main: skipped (switch to main first)"; return 1; }
+  if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+    fail "uncommitted changes: skipped (commit or stash them first)"; git status --short --untracked-files=no; return 1
+  fi
+  echo "Pulling main (fast-forward only)..."
+  git pull --ff-only origin main || { fail "git pull --ff-only failed (local main diverged from origin?)"; return 1; }
+  echo "Installing packages..."
+  bun install --frozen-lockfile || { fail "bun install --frozen-lockfile failed"; return 1; }
+  if [ ! -f "$feed/index.json" ]; then
+    echo "$feed is empty: restoring the published feed first (./scripts/update-data.ts --restore-from) ..."
+    bun ./scripts/update-data.ts --restore-from || { fail "restoring the published $feed failed"; return 1; }
+  fi
+  echo "Running ./scripts/update-data.ts ..."
+  bun ./scripts/update-data.ts
+  code=$?
+  UPDATE_STATE="$feed updated locally, not committed (the update-data workflow publishes it as a Pages artifact: run it to publish)"
+  [ $code -eq 0 ] || UPDATE_STATE="$UPDATE_STATE; update-data.ts exited $code"
+  return $code
+}
+
 update_repo() {
   local repo="$1" workflow feed message branch attempt code
   workflow="$repo/.github/workflows/update-data.yml"
   feed="$(sed -nE 's/^[[:space:]]*git add (api\/[A-Za-z0-9._-]+).*/\1/p' "$workflow" | head -1)"
   message="$(sed -nE 's/^[[:space:]]*git commit -m "([^"]+)".*/\1/p' "$workflow" | head -1)"
+  if [ -z "$feed" ] && grep -q 'actions/upload-pages-artifact' "$workflow"; then
+    update_local_only "$repo" "$workflow"; return $?
+  fi
   [ -n "$feed" ] && [ -n "$message" ] || { fail "cannot read the feed folder or the commit message from $workflow"; return 1; }
 
   cd "$repo" || { fail "cannot enter $repo"; return 1; }
