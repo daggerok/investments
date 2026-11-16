@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# Refresh the data of the repos cloned in the investments folder (the parent of scripts/): Stocks and the ETF brands
-# (the ETFs hub has no data), one repo after another,
+# Refresh the data of the repos cloned in the parent folder of scripts/ (the ETFs hub: the ETF brands; investments:
+# Stocks and the ETF brands; a repo without data, like the hub itself, is not listed), one repo after another,
 # with each repo's own updater, then commit and push it the way its update-data.yml workflow does:
 #   pull main fast-forward -> bun install --frozen-lockfile -> ./scripts/update-data.ts
-#   -> git add api/<feed> -> commit "chore(data): update <Brand> ETF data" (Stocks: "chore(data): update Stocks data") -> push (rebase and retry when main moved)
+#   -> git add api/<feed> -> commit "chore(data): update <Brand> ETF data" -> push (rebase and retry when main moved)
 # The feed folder and the commit message are read from the repo's .github/workflows/update-data.yml.
 # A repo that is not on main or has uncommitted changes outside its feed folder is skipped and reported, never touched.
 # Uncommitted changes inside the feed folder only are the leftover of an interrupted run (the updater writes, the
 # commit never came): they are discarded before the pull, since the updater regenerates them anyway.
-# A repo whose workflow publishes its feed as a GitHub Pages artifact (Stocks: no git add/commit in update-data.yml, the
-# feed is not in git) is only updated locally: pull, install, restore the published feed when api/<feed> is empty
-# (./scripts/update-data.ts --restore-from), run the updater; nothing is committed or published (run its workflow for that).
+# A repo whose feed is not in git (Stocks: update-data.yml has no git add/commit and publishes with update-data.ts
+# --publish) commits nothing: pull, install, restore the published feed when api/<feed> is empty
+# (./scripts/update-data.ts --restore-from), run the updater (with --signals when its workflow does), then publish it
+# with ./scripts/update-data.ts --publish (skipped with --no-push). It runs after the other repos.
+# Each repo prints when it started and finished and how long it took; the summary repeats it per repo and for the run.
+# The same file is ETFs/scripts/update-data.sh (ETFs hub) and scripts/update-data.sh (investments): change both together.
 
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -90,11 +93,14 @@ OUT="$(mktemp -d)"; trap 'rm -rf "$OUT"' EXIT
 # the reason a repo failed: printed in its section and shown again in the summary line
 fail() { UPDATE_STATE="$1"; echo "$1"; }
 
-# the workflow publishes the feed as a Pages artifact and the feed is not in git (Stocks): update it locally, commit nothing
+# the feed is not in git and the workflow publishes it with --publish (Stocks): update it locally and publish, commit nothing
+publishes_itself() { grep -qE 'update-data\.ts --publish|actions/upload-pages-artifact' "$1/.github/workflows/update-data.yml"; }
 update_local_only() {
   local repo="$1" workflow="$2" feed branch code
   feed="$(sed -nE 's/^[[:space:]]*path: (api\/[A-Za-z0-9._-]+)[[:space:]]*$/\1/p' "$workflow" | head -1)"
   [ -n "$feed" ] || { fail "cannot read the feed folder from $workflow"; return 1; }
+  local signals=()
+  grep -qE 'update-data\.ts[^#]*--signals' "$workflow" && signals=(--signals)
   cd "$repo" || { fail "cannot enter $repo"; return 1; }
   branch="$(git branch --show-current)"
   [ "$branch" = "main" ] || { fail "on '${branch:-detached HEAD}', not main: skipped (switch to main first)"; return 1; }
@@ -109,12 +115,14 @@ update_local_only() {
     echo "$feed is empty: restoring the published feed first (./scripts/update-data.ts --restore-from) ..."
     bun ./scripts/update-data.ts --restore-from || { fail "restoring the published $feed failed"; return 1; }
   fi
-  echo "Running ./scripts/update-data.ts ..."
-  bun ./scripts/update-data.ts
+  echo "Running ./scripts/update-data.ts ${signals[*]-}..."
+  bun ./scripts/update-data.ts ${signals[@]+"${signals[@]}"}
   code=$?
-  UPDATE_STATE="$feed updated locally, not committed (the update-data workflow publishes it as a Pages artifact: run it to publish)"
-  [ $code -eq 0 ] || UPDATE_STATE="$UPDATE_STATE; update-data.ts exited $code"
-  return $code
+  [ $code -eq 0 ] || { fail "update-data.ts exited $code: $feed updated locally, not published"; return $code; }
+  if [ "$PUSH" -eq 0 ]; then UPDATE_STATE="$feed updated locally, not published (--no-push)"; return 0; fi
+  echo "Publishing (./scripts/update-data.ts --publish) ..."
+  bun ./scripts/update-data.ts --publish || { fail "$feed updated locally, update-data.ts --publish failed"; return 1; }
+  UPDATE_STATE="$feed updated and published, nothing committed"
 }
 
 update_repo() {
@@ -122,7 +130,7 @@ update_repo() {
   workflow="$repo/.github/workflows/update-data.yml"
   feed="$(sed -nE 's/^[[:space:]]*git add (api\/[A-Za-z0-9._-]+).*/\1/p' "$workflow" | head -1)"
   message="$(sed -nE 's/^[[:space:]]*git commit -m "([^"]+)".*/\1/p' "$workflow" | head -1)"
-  if [ -z "$feed" ] && grep -q 'actions/upload-pages-artifact' "$workflow"; then
+  if [ -z "$feed" ] && publishes_itself "$repo"; then
     update_local_only "$repo" "$workflow"; return $?
   fi
   [ -n "$feed" ] && [ -n "$message" ] || { fail "cannot read the feed folder or the commit message from $workflow"; return 1; }
@@ -171,18 +179,32 @@ update_repo() {
   return 1
 }
 
-echo "Updating the data of ${#LIST[@]} repo(s), one after another ..."
+# a repo that publishes itself (Stocks) reads the other feeds when it publishes: it goes last
+FIRST=(); LAST=()
+for repo in "${LIST[@]}"; do
+  if publishes_itself "$repo"; then LAST+=("$repo"); else FIRST+=("$repo"); fi
+done
+LIST=(${FIRST[@]+"${FIRST[@]}"} ${LAST[@]+"${LAST[@]}"})
+
+# 1h02m03s, 4m05s or 7s
+dur() { local t=$1; if [ "$t" -ge 3600 ]; then printf '%dh%02dm%02ds' $((t / 3600)) $((t % 3600 / 60)) $((t % 60));
+  elif [ "$t" -ge 60 ]; then printf '%dm%02ds' $((t / 60)) $((t % 60)); else printf '%ds' "$t"; fi; }
+now() { date '+%Y-%m-%d %H:%M:%S'; }
+RUN_START=$(now); RUN_SECONDS=$SECONDS
+echo "Updating the data of ${#LIST[@]} repo(s), one after another, started $RUN_START ..."
 for repo in "${LIST[@]}"; do
   echo "========================================"
   echo "$repo"
   echo "========================================"
   UPDATE_STATE=""
-  started=$SECONDS
+  started=$SECONDS; start_at=$(date '+%H:%M:%S')
+  echo "Started $(now)"
   ( update_repo "$repo"; echo "$?|$UPDATE_STATE" > "$OUT/$repo" )
   IFS='|' read -r code state < "$OUT/$repo" 2>/dev/null || { code=1; state=""; }
-  took=$((SECONDS - started))
-  if [ "$code" -eq 0 ]; then RESULTS+=("OK      $repo: ${state:-done} (${took}s)")
-  else RESULTS+=("FAILED  $repo: ${state:-not committed} (exit $code, ${took}s)"); FAILED=$((FAILED + 1)); fi
+  took=$(dur $((SECONDS - started))); end_at=$(date '+%H:%M:%S')
+  echo "Finished $(now), took $took"
+  if [ "$code" -eq 0 ]; then RESULTS+=("OK      $repo: ${state:-done} ($start_at -> $end_at, $took)")
+  else RESULTS+=("FAILED  $repo: ${state:-not committed} (exit $code, $start_at -> $end_at, $took)"); FAILED=$((FAILED + 1)); fi
   echo
 done
 
@@ -191,6 +213,7 @@ echo "Summary"
 echo "========================================"
 printf '%s\n' "${RESULTS[@]}"
 echo "Done: $((${#LIST[@]} - FAILED)) ok, $FAILED failed."
+echo "Started $RUN_START, finished $(now), took $(dur $((SECONDS - RUN_SECONDS)))"
 [ "$FAILED" -eq 0 ] || exit 1
 }
 exit $?
