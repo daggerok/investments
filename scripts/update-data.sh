@@ -11,7 +11,7 @@
 # A repo whose feed is not in git (Stocks: update-data.yml has no git add/commit and publishes with update-data.ts
 # --publish) commits nothing: pull, install, restore the published feed when api/<feed> is empty
 # (./scripts/update-data.ts --restore-from), run the updater (with --signals when its workflow does), then publish it
-# with ./scripts/update-data.ts --publish (skipped with --no-push). It runs after the other repos.
+# with ./scripts/update-data.ts --publish (skipped with --no-push).
 # Each repo prints when it started and finished and how long it took; the summary repeats it per repo and for the run.
 # The same file is ETFs/scripts/update-data.sh (ETFs hub) and scripts/update-data.sh (investments): change both together.
 
@@ -178,13 +178,6 @@ update_repo() {
   fail "push failed 4 times: the data commit stays local"
   return 1
 }
-
-# a repo that publishes itself (Stocks) reads the other feeds when it publishes: it goes last
-FIRST=(); LAST=()
-for repo in "${LIST[@]}"; do
-  if publishes_itself "$repo"; then LAST+=("$repo"); else FIRST+=("$repo"); fi
-done
-LIST=(${FIRST[@]+"${FIRST[@]}"} ${LAST[@]+"${LAST[@]}"})
 
 # 1h02m03s, 4m05s or 7s
 dur() { local t=$1; if [ "$t" -ge 3600 ]; then printf '%dh%02dm%02ds' $((t / 3600)) $((t % 3600 / 60)) $((t % 60));
