@@ -13,6 +13,7 @@
 # (./scripts/update-data.ts --restore-from), run the updater (with --signals when its workflow does), then publish it
 # with ./scripts/update-data.ts --publish (skipped with --no-push).
 # Each repo prints when it started and finished and how long it took; the summary repeats it per repo and for the run.
+# -j N (--jobs N) updates up to N repos at the same time (owner 2026-11-19); every output line then starts with [<repo>].
 # The same file is ETFs/scripts/update-data.sh (ETFs hub) and scripts/update-data.sh (investments): change both together.
 
 set -uo pipefail
@@ -33,6 +34,9 @@ Usage: ./scripts/update-data.sh [options] [repo ...]
 
 Options:
   --no-push                 commit the new data but do not push it
+  -j N, --jobs N            update up to N repos at the same time (default 1); each output line starts with [<repo>].
+                            Keep N small (3-4): the repos share the SEC and Yahoo rate limits of your IP
+                              ./scripts/update-data.sh -j 4
   -h, --help                show this help
 
 Update controls are environment variables passed to every repo's ./scripts/update-data.ts, e.g.
@@ -45,10 +49,13 @@ USAGE
 die() { echo "update-data.sh: $*" >&2; exit 2; }
 
 PUSH=1
+JOBS=1
 SELECTED=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-push) PUSH=0 ;;
+    -j|--jobs) shift; JOBS="${1:-}"; [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "-j needs a positive number of parallel repos" ;;
+    -j[1-9]*) JOBS="${1#-j}"; [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "-j needs a positive number of parallel repos" ;;
     -h|--help) usage; exit 0 ;;
     -*) die "unknown option: $1 (see ./scripts/update-data.sh --help)" ;;
     *)
@@ -184,8 +191,31 @@ dur() { local t=$1; if [ "$t" -ge 3600 ]; then printf '%dh%02dm%02ds' $((t / 360
   elif [ "$t" -ge 60 ]; then printf '%dm%02ds' $((t / 60)) $((t % 60)); else printf '%ds' "$t"; fi; }
 now() { date '+%Y-%m-%d %H:%M:%S'; }
 RUN_START=$(now); RUN_SECONDS=$SECONDS
-echo "Updating the data of ${#LIST[@]} repo(s), one after another, started $RUN_START ..."
-for repo in "${LIST[@]}"; do
+if [ "$JOBS" -gt 1 ]; then
+  # parallel: each repo in its own background job with prefixed output; the results are read from $OUT afterwards
+  echo "Updating the data of ${#LIST[@]} repo(s), up to $JOBS at a time, started $RUN_START ..."
+  for repo in "${LIST[@]}"; do
+    while [ "$(jobs -rp | wc -l)" -ge "$JOBS" ]; do wait -n 2>/dev/null || true; done
+    (
+      UPDATE_STATE=""
+      started=$SECONDS; start_at=$(date '+%H:%M:%S')
+      echo "Started $(now)"
+      ( update_repo "$repo"; echo "$?|$UPDATE_STATE" > "$OUT/$repo" )
+      echo "$start_at|$(date '+%H:%M:%S')|$(dur $((SECONDS - started)))" > "$OUT/$repo.time"
+      echo "Finished $(now), took $(dur $((SECONDS - started)))"
+    ) 2>&1 | awk -v p="[$repo] " '{ print p $0; fflush() }' &
+  done
+  wait
+  for repo in "${LIST[@]}"; do
+    IFS='|' read -r code state < "$OUT/$repo" 2>/dev/null || { code=1; state=""; }
+    IFS='|' read -r start_at end_at took < "$OUT/$repo.time" 2>/dev/null || { start_at="?"; end_at="?"; took="?"; }
+    if [ "$code" -eq 0 ]; then RESULTS+=("OK      $repo: ${state:-done} ($start_at -> $end_at, $took)")
+    else RESULTS+=("FAILED  $repo: ${state:-not committed} (exit $code, $start_at -> $end_at, $took)"); FAILED=$((FAILED + 1)); fi
+  done
+  LIST_DONE=1
+fi
+[ "${LIST_DONE:-0}" -eq 1 ] || echo "Updating the data of ${#LIST[@]} repo(s), one after another, started $RUN_START ..."
+[ "${LIST_DONE:-0}" -eq 1 ] || for repo in "${LIST[@]}"; do
   echo "========================================"
   echo "$repo"
   echo "========================================"
