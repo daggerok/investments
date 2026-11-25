@@ -15,6 +15,8 @@
 # ./scripts/update-data.ts --publish (skipped with --no-push).
 # Each repo prints when it started and finished and how long it took; the summary repeats it per repo and for the run.
 # -p N (--parallel N, also -j N, --jobs N) updates up to N repos at the same time (owner 2026-11-19, -p 2026-11-24); every output line then starts with [<repo>].
+# Every run saves its output in logs/update-data/<date>_<time>/: <repo>.log per repo and summary.log (logs/ is
+# gitignored, the last 30 runs are kept), so a failed repo can be read afterwards; the summary names each log.
 # The same file is ETFs/scripts/update-data.sh (ETFs hub) and scripts/update-data.sh (investments): change both together.
 
 set -uo pipefail
@@ -46,7 +48,8 @@ Options:
 Update controls are environment variables passed to every repo's ./scripts/update-data.ts, e.g.
   REQUEST_SLEEP=1 ./scripts/update-data.sh VanEck
 (see "Update controls" in each repo's README). The output streams live; a summary is printed at the end and
-the exit code is non-zero if any repo failed.
+the exit code is non-zero if any repo failed. Every run is also saved in logs/update-data/<date>_<time>/
+(<repo>.log per repo and summary.log; logs/ is gitignored, the last 30 runs are kept).
 USAGE
 }
 
@@ -101,6 +104,10 @@ fi
 RESULTS=()
 FAILED=0
 OUT="$(mktemp -d)"; trap 'rm -rf "$OUT"' EXIT
+# the output of every run, readable after it: logs/update-data/<date>_<time>/<repo>.log and summary.log (gitignored)
+LOGS="logs/update-data/$(date '+%Y-%m-%d_%H%M%S')"
+mkdir -p "$LOGS" || die "cannot create $LOGS"
+ls -1 logs/update-data | sort -r | tail -n +31 | while read -r old; do rm -rf "logs/update-data/$old"; done
 
 # the reason a repo failed: printed in its section and shown again in the summary line
 fail() { UPDATE_STATE="$1"; echo "$1"; }
@@ -214,14 +221,14 @@ if [ "$JOBS" -gt 1 ] && [ ${#LIST[@]} -gt 1 ]; then
       ( update_repo "$repo"; echo "$?|$UPDATE_STATE" > "$OUT/$repo" )
       echo "$start_at|$(date '+%H:%M:%S')|$(dur $((SECONDS - started)))" > "$OUT/$repo.time"
       echo "Finished $(now), took $(dur $((SECONDS - started)))"
-    ) 2>&1 | awk -v p="[$repo] " '{ print p $0; fflush() }' &
+    ) 2>&1 | tee "$LOGS/$repo.log" | awk -v p="[$repo] " '{ print p $0; fflush() }' &
   done
   wait
   for repo in "${LIST[@]}"; do
     IFS='|' read -r code state < "$OUT/$repo" 2>/dev/null || { code=1; state=""; }
     IFS='|' read -r start_at end_at took < "$OUT/$repo.time" 2>/dev/null || { start_at="?"; end_at="?"; took="?"; }
     if [ "$code" -eq 0 ]; then RESULTS+=("OK      $repo: ${state:-done} ($start_at -> $end_at, $took)")
-    else RESULTS+=("FAILED  $repo: ${state:-not committed} (exit $code, $start_at -> $end_at, $took)"); FAILED=$((FAILED + 1)); fi
+    else RESULTS+=("FAILED  $repo: ${state:-not committed} (exit $code, $start_at -> $end_at, $took), log: $LOGS/$repo.log"); FAILED=$((FAILED + 1)); fi
   done
   LIST_DONE=1
 fi
@@ -230,24 +237,29 @@ fi
   echo "========================================"
   echo "$repo"
   echo "========================================"
-  UPDATE_STATE=""
   started=$SECONDS; start_at=$(date '+%H:%M:%S')
-  echo "Started $(now)"
-  ( update_repo "$repo"; echo "$?|$UPDATE_STATE" > "$OUT/$repo" )
+  {
+    UPDATE_STATE=""
+    echo "Started $(now)"
+    ( update_repo "$repo"; echo "$?|$UPDATE_STATE" > "$OUT/$repo" )
+    echo "Finished $(now), took $(dur $((SECONDS - started)))"
+  } 2>&1 | tee "$LOGS/$repo.log"
   IFS='|' read -r code state < "$OUT/$repo" 2>/dev/null || { code=1; state=""; }
   took=$(dur $((SECONDS - started))); end_at=$(date '+%H:%M:%S')
-  echo "Finished $(now), took $took"
   if [ "$code" -eq 0 ]; then RESULTS+=("OK      $repo: ${state:-done} ($start_at -> $end_at, $took)")
-  else RESULTS+=("FAILED  $repo: ${state:-not committed} (exit $code, $start_at -> $end_at, $took)"); FAILED=$((FAILED + 1)); fi
+  else RESULTS+=("FAILED  $repo: ${state:-not committed} (exit $code, $start_at -> $end_at, $took), log: $LOGS/$repo.log"); FAILED=$((FAILED + 1)); fi
   echo
 done
 
-echo "========================================"
-echo "Summary"
-echo "========================================"
-printf '%s\n' "${RESULTS[@]}"
-echo "Done: $((${#LIST[@]} - FAILED)) ok, $FAILED failed."
-echo "Started $RUN_START, finished $(now), took $(dur $((SECONDS - RUN_SECONDS)))"
+{
+  echo "========================================"
+  echo "Summary"
+  echo "========================================"
+  printf '%s\n' "${RESULTS[@]}"
+  echo "Done: $((${#LIST[@]} - FAILED)) ok, $FAILED failed."
+  echo "Started $RUN_START, finished $(now), took $(dur $((SECONDS - RUN_SECONDS)))"
+  echo "Logs: $LOGS"
+} | tee "$LOGS/summary.log"
 [ "$FAILED" -eq 0 ] || exit 1
 }
 exit $?

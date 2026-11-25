@@ -11,6 +11,7 @@
 !/src/
 
 # local noise
+logs/
 .idea/
 .DS_Store
 node_modules/
