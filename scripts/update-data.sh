@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Refresh the data of the repos cloned in the parent folder of scripts/ (the ETFs hub: the ETF brands; investments:
-# Stocks and the ETF brands; a repo without data, like the hub itself, is not listed), one repo after another,
+# Stocks and the ETF brands; a repo without data, like the hub itself, is not listed), up to 3 repos at a time,
 # with each repo's own updater, then commit and push it the way its update-data.yml workflow does:
 #   pull main fast-forward -> bun install --frozen-lockfile -> ./scripts/update-data.ts
 #   -> git add api/<feed> -> commit "chore(data): update <Brand> ETF data" -> push (rebase and retry when main moved)
@@ -9,11 +9,12 @@
 # Uncommitted changes inside the feed folder only are the leftover of an interrupted run (the updater writes, the
 # commit never came): they are discarded before the pull, since the updater regenerates them anyway.
 # A repo whose feed is not in git (Stocks: update-data.yml has no git add/commit and publishes with update-data.ts
-# --publish) commits nothing: pull, install, restore the published feed when api/<feed> is empty
-# (./scripts/update-data.ts --restore-from), run the updater (with --signals when its workflow does), then publish it
-# with ./scripts/update-data.ts --publish (skipped with --no-push).
+# --publish) commits nothing: pull, install, restore the published feed when it is newer than api/<feed> or that is
+# empty (./scripts/update-data.ts --restore-from --if-newer, like its workflow), run the updater (with --signals when
+# its workflow does), remove the folders of delisted stocks (./scripts/update-data.ts --prune), then publish it with
+# ./scripts/update-data.ts --publish (skipped with --no-push).
 # Each repo prints when it started and finished and how long it took; the summary repeats it per repo and for the run.
-# -j N (--jobs N) updates up to N repos at the same time (owner 2026-11-19); every output line then starts with [<repo>].
+# -p N (--parallel N, also -j N, --jobs N) updates up to N repos at the same time (owner 2026-11-19, -p 2026-11-24); every output line then starts with [<repo>].
 # The same file is ETFs/scripts/update-data.sh (ETFs hub) and scripts/update-data.sh (investments): change both together.
 
 set -uo pipefail
@@ -27,16 +28,19 @@ usage() {
   cat <<USAGE
 Usage: ./scripts/update-data.sh [options] [repo ...]
 
-  (no arguments)            update the data of every cloned repo, one after another
+  (no arguments)            update the data of every cloned repo, up to 3 at a time
   repo ...                  only these repos, separated by spaces and/or commas (case-insensitive):
                               ./scripts/update-data.sh VanEck Tema
                               ./scripts/update-data.sh VanEck,Tema
 
 Options:
   --no-push                 commit the new data but do not push it
-  -j N, --jobs N            update up to N repos at the same time (default 1); each output line starts with [<repo>].
+  -p N, --parallel N, -j N, --jobs N
+                            update up to N repos at the same time (default 3), each output line then starts with
+                            [<repo>]; -p 1 updates one after another in plain sections, like a single repo does
+                            Also -pN, -jN, --parallel=N, --jobs=N
                             Keep N small (3-4): the repos share the SEC and Yahoo rate limits of your IP
-                              ./scripts/update-data.sh -j 4
+                              ./scripts/update-data.sh -p 4
   -h, --help                show this help
 
 Update controls are environment variables passed to every repo's ./scripts/update-data.ts, e.g.
@@ -49,13 +53,14 @@ USAGE
 die() { echo "update-data.sh: $*" >&2; exit 2; }
 
 PUSH=1
-JOBS=1
+JOBS=3
 SELECTED=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-push) PUSH=0 ;;
-    -j|--jobs) shift; JOBS="${1:-}"; [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "-j needs a positive number of parallel repos" ;;
-    -j[1-9]*) JOBS="${1#-j}"; [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "-j needs a positive number of parallel repos" ;;
+    -p|--parallel|-j|--jobs) shift; JOBS="${1:-}"; [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "-p needs a positive number of parallel repos" ;;
+    --parallel=*|--jobs=*) JOBS="${1#*=}"; [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "-p needs a positive number of parallel repos" ;;
+    -p[1-9]*|-j[1-9]*) JOBS="${1#-?}"; [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "-p needs a positive number of parallel repos" ;;
     -h|--help) usage; exit 0 ;;
     -*) die "unknown option: $1 (see ./scripts/update-data.sh --help)" ;;
     *)
@@ -118,14 +123,19 @@ update_local_only() {
   git pull --ff-only origin main || { fail "git pull --ff-only failed (local main diverged from origin?)"; return 1; }
   echo "Installing packages..."
   bun install --frozen-lockfile || { fail "bun install --frozen-lockfile failed"; return 1; }
-  if [ ! -f "$feed/index.json" ]; then
-    echo "$feed is empty: restoring the published feed first (./scripts/update-data.ts --restore-from) ..."
-    bun ./scripts/update-data.ts --restore-from || { fail "restoring the published $feed failed"; return 1; }
-  fi
+  # like the workflow: start from the published feed when it is newer than the local one (a workflow run on GitHub)
+  # or the local one is empty; an up to date local feed is kept as it is
+  echo "Restoring the published feed when it is newer (./scripts/update-data.ts --restore-from --if-newer) ..."
+  bun ./scripts/update-data.ts --restore-from --if-newer || { fail "restoring the published $feed failed"; return 1; }
   echo "Running ./scripts/update-data.ts ${signals[*]-}..."
   bun ./scripts/update-data.ts ${signals[@]+"${signals[@]}"}
   code=$?
   [ $code -eq 0 ] || { fail "update-data.ts exited $code: $feed updated locally, not published"; return $code; }
+  # the folders of delisted stocks the index dropped (no price for 60 days): removed on every run, not by hand once a quarter
+  if grep -q -- "'--prune'" scripts/update-data.ts; then
+    echo "Removing delisted folders (./scripts/update-data.ts --prune) ..."
+    bun ./scripts/update-data.ts --prune || echo "update-data.ts --prune failed: the delisted folders stay, publishing anyway"
+  fi
   if [ "$PUSH" -eq 0 ]; then UPDATE_STATE="$feed updated locally, not published (--no-push)"; return 0; fi
   echo "Publishing (./scripts/update-data.ts --publish) ..."
   bun ./scripts/update-data.ts --publish || { fail "$feed updated locally, update-data.ts --publish failed"; return 1; }
@@ -191,7 +201,8 @@ dur() { local t=$1; if [ "$t" -ge 3600 ]; then printf '%dh%02dm%02ds' $((t / 360
   elif [ "$t" -ge 60 ]; then printf '%dm%02ds' $((t / 60)) $((t % 60)); else printf '%ds' "$t"; fi; }
 now() { date '+%Y-%m-%d %H:%M:%S'; }
 RUN_START=$(now); RUN_SECONDS=$SECONDS
-if [ "$JOBS" -gt 1 ]; then
+# one repo, or -p 1: the plain sections, one after another
+if [ "$JOBS" -gt 1 ] && [ ${#LIST[@]} -gt 1 ]; then
   # parallel: each repo in its own background job with prefixed output; the results are read from $OUT afterwards
   echo "Updating the data of ${#LIST[@]} repo(s), up to $JOBS at a time, started $RUN_START ..."
   for repo in "${LIST[@]}"; do
