@@ -14,6 +14,7 @@
 # its workflow does), remove the folders of delisted stocks (./scripts/update-data.ts --prune), then publish it with
 # ./scripts/update-data.ts --publish (skipped with --no-push).
 # Each repo prints when it started and finished and how long it took; the summary repeats it per repo and for the run.
+# With no repo named, Stocks starts first (the longest run, owner 2026-11-27), then the ETF brands in name order; named repos run in the order given.
 # -p N (--parallel N, also -j N, --jobs N) updates up to N repos at the same time (owner 2026-11-19, -p 2026-11-24); every output line then starts with [<repo>].
 # Every run saves its output in logs/update-data/<date>_<time>/: <repo>.log per repo and summary.log (logs/ is
 # gitignored, the last 30 runs are kept), so a failed repo can be read afterwards; the summary names each log.
@@ -30,7 +31,8 @@ usage() {
   cat <<USAGE
 Usage: ./scripts/update-data.sh [options] [repo ...]
 
-  (no arguments)            update the data of every cloned repo, up to 3 at a time
+  (no arguments)            update the data of every cloned repo, up to 3 at a time: Stocks starts first (the
+                            longest run), then the ETF brands in name order
   repo ...                  only these repos, separated by spaces and/or commas (case-insensitive):
                               ./scripts/update-data.sh VanEck Tema
                               ./scripts/update-data.sh VanEck,Tema
@@ -85,6 +87,13 @@ for dir in */; do
   [ -d "$dir/.git" ] && [ -f "$dir/scripts/update-data.ts" ] && [ -f "$dir/.github/workflows/update-data.yml" ] && CLONED+=("$dir")
 done
 [ ${#CLONED[@]} -gt 0 ] || die "no cloned data repos here: run ./scripts/install.sh first"
+# Stocks is the longest single run (about 17 minutes): it starts first, the ETF brands follow in name order (owner 2026-11-27)
+FIRST=()
+REST=()
+for repo in "${CLONED[@]}"; do
+  if [ "$repo" = "Stocks" ]; then FIRST+=("$repo"); else REST+=("$repo"); fi
+done
+CLONED=(${FIRST[@]+"${FIRST[@]}"} ${REST[@]+"${REST[@]}"})
 
 if [ ${#SELECTED[@]} -gt 0 ]; then
   LIST=()
