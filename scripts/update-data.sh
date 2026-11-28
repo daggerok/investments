@@ -15,6 +15,7 @@
 # ./scripts/update-data.ts --publish (skipped with --no-push).
 # Each repo prints when it started and finished and how long it took; the summary repeats it per repo and for the run.
 # With no repo named, Stocks starts first (the longest run, owner 2026-11-27), then the ETF brands in name order; named repos run in the order given.
+# -p counts the ETF brands only: with -p 2 or more Stocks runs in its own lane next to up to N brands; with -p 1 Stocks runs first, then the brands one by one.
 # -p N (--parallel N, also -j N, --jobs N) updates up to N repos at the same time (owner 2026-11-19, -p 2026-11-24); every output line then starts with [<repo>].
 # Every run saves its output in logs/update-data/<date>_<time>/: <repo>.log per repo and summary.log (logs/ is
 # gitignored, the last 30 runs are kept), so a failed repo can be read afterwards; the summary names each log.
@@ -31,8 +32,8 @@ usage() {
   cat <<USAGE
 Usage: ./scripts/update-data.sh [options] [repo ...]
 
-  (no arguments)            update the data of every cloned repo, up to 3 at a time: Stocks starts first (the
-                            longest run), then the ETF brands in name order
+  (no arguments)            update the data of every cloned repo: Stocks starts first (the longest run) in its
+                            own lane, next to it the ETF brands in name order, up to 3 at a time
   repo ...                  only these repos, separated by spaces and/or commas (case-insensitive):
                               ./scripts/update-data.sh VanEck Tema
                               ./scripts/update-data.sh VanEck,Tema
@@ -40,8 +41,9 @@ Usage: ./scripts/update-data.sh [options] [repo ...]
 Options:
   --no-push                 commit the new data but do not push it
   -p N, --parallel N, -j N, --jobs N
-                            update up to N repos at the same time (default 3), each output line then starts with
-                            [<repo>]; -p 1 updates one after another in plain sections, like a single repo does
+                            update up to N ETF brands at the same time (default 3), each output line then starts
+                            with [<repo>]; Stocks runs in its own lane next to them and takes none of the N places;
+                            -p 1 updates one after another in plain sections (Stocks first), like a single repo does
                             Also -pN, -jN, --parallel=N, --jobs=N
                             Keep N small (3-4): the repos share the SEC and Yahoo rate limits of your IP
                               ./scripts/update-data.sh -p 4
@@ -218,11 +220,19 @@ dur() { local t=$1; if [ "$t" -ge 3600 ]; then printf '%dh%02dm%02ds' $((t / 360
 now() { date '+%Y-%m-%d %H:%M:%S'; }
 RUN_START=$(now); RUN_SECONDS=$SECONDS
 # one repo, or -p 1: the plain sections, one after another
-if [ "$JOBS" -gt 1 ] && [ ${#LIST[@]} -gt 1 ]; then
+if [ "$JOBS" -gt 1 ] && [ ${#LIST[@]} -gt 1 ]; then # -p 1 falls through to the plain loop below: Stocks, then the brands one by one
   # parallel: each repo in its own background job with prefixed output; the results are read from $OUT afterwards
-  echo "Updating the data of ${#LIST[@]} repo(s), up to $JOBS at a time, started $RUN_START ..."
+  case " ${LIST[*]} " in *" Stocks "*) echo "Updating the data of ${#LIST[@]} repo(s), Stocks in its own lane and up to $JOBS ETF brand(s) at a time, started $RUN_START ..." ;;
+    *) echo "Updating the data of ${#LIST[@]} repo(s), up to $JOBS at a time, started $RUN_START ..." ;; esac
+  STOCKS_PID=""
   for repo in "${LIST[@]}"; do
-    while [ "$(jobs -rp | wc -l)" -ge "$JOBS" ]; do wait -n 2>/dev/null || true; done
+    # Stocks runs in its own lane next to the ETF brands: it starts at once and takes none of the $JOBS places
+    while [ "$repo" != "Stocks" ]; do
+      running=$(jobs -rp | wc -l)
+      [ -n "$STOCKS_PID" ] && kill -0 "$STOCKS_PID" 2>/dev/null && running=$((running - 1))
+      [ "$running" -ge "$JOBS" ] || break
+      wait -n 2>/dev/null || sleep 1
+    done
     (
       UPDATE_STATE=""
       started=$SECONDS; start_at=$(date '+%H:%M:%S')
@@ -231,6 +241,7 @@ if [ "$JOBS" -gt 1 ] && [ ${#LIST[@]} -gt 1 ]; then
       echo "$start_at|$(date '+%H:%M:%S')|$(dur $((SECONDS - started)))" > "$OUT/$repo.time"
       echo "Finished $(now), took $(dur $((SECONDS - started)))"
     ) 2>&1 | tee "$LOGS/$repo.log" | awk -v p="[$repo] " '{ print p $0; fflush() }' &
+    [ "$repo" = "Stocks" ] && STOCKS_PID=$!
   done
   wait
   for repo in "${LIST[@]}"; do
